@@ -177,3 +177,7 @@ tmp/
 
 # Claude Code
 CLAUDE.md
+
+# Piper voice models (download from https://huggingface.co/rhasspy/piper-voices)
+models/TTS/piper/
+test_*.wav

@@ -42,6 +42,11 @@ def get_speech_synthesizer(
 
         return tts_glados.SpeechSynthesizer()
 
+    from ..TTS import tts_piper
+
+    if voice in tts_piper.get_piper_voices():
+        return tts_piper.SpeechSynthesizer(voice=voice)
+
     from ..TTS import tts_kokoro
 
     available_voices = tts_kokoro.get_voices()
