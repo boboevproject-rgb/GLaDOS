@@ -20,7 +20,9 @@ import requests
 import soundfile as sf
 
 API_URL = "https://api.fish.audio/v1/tts"
+KITTA_API_URL = "https://fishaudio.org/api/open/v1/speech/tts"
 DEFAULT_MODEL = "s1"
+KITTA_DEFAULT_MODEL = "fishaudio-s21pro-flash"
 REQUEST_TIMEOUT_S = 30
 
 
@@ -36,25 +38,38 @@ class SpeechSynthesizer:
         self,
         reference_id: str,
         api_key: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         sample_rate: int = 44100,
+        backend: str = "official",
     ) -> None:
         self.api_key = api_key or os.environ.get("FISH_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "Fish Audio API key not found. Set the FISH_API_KEY environment "
-                "variable (create a key at https://fish.audio)."
+                "variable (create a key at https://fish.audio or https://fishaudio.org)."
             )
+        if backend not in ("official", "kitta"):
+            raise ValueError(f"Unknown Fish Audio backend: {backend}")
+        self.backend = backend
         self.reference_id = reference_id
-        self.model = model
+        self.model = model or (KITTA_DEFAULT_MODEL if backend == "kitta" else DEFAULT_MODEL)
         self.sample_rate = sample_rate
         self._session = requests.Session()
 
-    def generate_speech_audio(self, text: str) -> NDArray[np.float32]:
-        text = text.strip()
-        if not text:
-            return np.array([], dtype=np.float32)
-        try:
+    def _request_audio(self, text: str) -> bytes:
+        if self.backend == "kitta":
+            response = self._session.post(
+                KITTA_API_URL,
+                json={
+                    "text": text,
+                    "voiceId": self.reference_id,
+                    "modelId": self.model,
+                    "format": "mp3",
+                },
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=REQUEST_TIMEOUT_S,
+            )
+        else:
             response = self._session.post(
                 API_URL,
                 json={
@@ -70,12 +85,20 @@ class SpeechSynthesizer:
                 },
                 timeout=REQUEST_TIMEOUT_S,
             )
-            response.raise_for_status()
+        response.raise_for_status()
+        return response.content
+
+    def generate_speech_audio(self, text: str) -> NDArray[np.float32]:
+        text = text.strip()
+        if not text:
+            return np.array([], dtype=np.float32)
+        try:
+            content = self._request_audio(text)
         except requests.RequestException as e:
             logger.error(f"Fish Audio TTS request failed: {e}")
             return np.array([], dtype=np.float32)
 
-        audio, wav_rate = sf.read(BytesIO(response.content), dtype="float32")
+        audio, wav_rate = sf.read(BytesIO(content), dtype="float32")
         if audio.ndim > 1:  # downmix, the player expects mono
             audio = audio.mean(axis=1)
         if wav_rate != self.sample_rate:

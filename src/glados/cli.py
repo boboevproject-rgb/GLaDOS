@@ -4,6 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 import sys
 
+from dotenv import load_dotenv
 import httpx
 from rich import print as rprint
 from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn
@@ -373,6 +374,8 @@ def main() -> int:
     Raises:
         SystemExit: If invalid arguments are provided
     """
+    # Secrets like FISH_API_KEY live in a local .env next to the project
+    load_dotenv()
     parser = argparse.ArgumentParser(description="GLaDOS Voice Assistant")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 

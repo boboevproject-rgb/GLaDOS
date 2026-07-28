@@ -47,6 +47,11 @@ def get_speech_synthesizer(
 
         return tts_fish.SpeechSynthesizer(reference_id=voice.split(":", 1)[1])
 
+    if voice.lower().startswith("kitta:"):
+        from ..TTS import tts_fish
+
+        return tts_fish.SpeechSynthesizer(reference_id=voice.split(":", 1)[1], backend="kitta")
+
     from ..TTS import tts_piper
 
     if voice in tts_piper.get_piper_voices():
