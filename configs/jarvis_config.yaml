@@ -1,7 +1,8 @@
 Glados:
-  # LLM-мозг: локальная Ollama по умолчанию; можно указать любой OpenAI-совместимый API
-  llm_model: "llama3.2"
-  completion_url: "http://localhost:11434/api/chat"
+  # LLM-мозг: локальный прокси на Claude Code CLI (scripts/claude_brain_proxy.py).
+  # Запуск: START-JARVIS.bat (поднимает прокси и ассистента вместе).
+  llm_model: "sonnet"
+  completion_url: "http://127.0.0.1:8555/v1/chat/completions"
   api_key: null
   interruptible: true
   audio_io: "sounddevice"
