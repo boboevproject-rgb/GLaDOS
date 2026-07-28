@@ -15,6 +15,7 @@ import time
 from typing import Any, Callable, Literal
 
 from loguru import logger
+import numpy as np
 from pydantic import BaseModel, HttpUrl, model_validator
 import yaml
 
@@ -34,6 +35,7 @@ from ..observability import MindRegistry, ObservabilityBus, trim_message
 from ..vision import VisionConfig, VisionState
 from ..vision.constants import SYSTEM_PROMPT_VISION_HANDLING
 from .audio_data import AudioMessage
+from .sound_bank import SoundBank
 from .context import ContextBuilder
 from .audio_state import AudioState
 from .conversation_store import ConversationStore
@@ -94,6 +96,17 @@ class PersonalityPrompt(BaseModel):
         return {"role": field, "content": value}
 
 
+class SoundBankConfig(BaseModel):
+    """Configuration for pre-recorded voice lines played without TTS.
+
+    `dir` is the base directory with WAV files; `sounds` maps a category
+    ("startup", "wake_ack", "processing", ...) to filenames inside it.
+    """
+
+    dir: str
+    sounds: dict[str, list[str]]
+
+
 class GladosConfig(BaseModel):
     """
     Configuration model for the Glados voice assistant.
@@ -123,6 +136,7 @@ class GladosConfig(BaseModel):
     vision: VisionConfig | None = None
     autonomy: AutonomyConfig | None = None
     mcp_servers: list[MCPServerConfig] | None = None
+    sound_bank: SoundBankConfig | None = None
 
     @model_validator(mode="after")
     def _resolve_api_key_from_env(self) -> "GladosConfig":
@@ -242,6 +256,7 @@ class Glados:
         tts_enabled: bool = True,
         asr_muted: bool = False,
         llm_headers: dict[str, str] | None = None,
+        sound_bank_config: SoundBankConfig | None = None,
     ) -> None:
         """
         Initialize the Glados voice assistant with configuration parameters.
@@ -283,6 +298,13 @@ class Glados:
         self.tool_config = tool_config or {}
         self.tool_timeout = tool_timeout
         self.mcp_servers = mcp_servers or []
+        self.sound_bank: SoundBank | None = None
+        if sound_bank_config is not None:
+            self.sound_bank = SoundBank(
+                sounds_dir=resource_path(sound_bank_config.dir),
+                sounds=sound_bank_config.sounds,
+                sample_rate=tts_model.sample_rate,
+            )
         self._conversation_store = ConversationStore(initial_messages=list(personality_preprompt))
         self.vision_config = vision_config
         self.autonomy_config = autonomy_config or AutonomyConfig()
@@ -418,6 +440,7 @@ class Glados:
                 asr_muted_event=self.asr_muted_event,
                 audio_state=self.audio_state,
                 on_interrupt=lambda _: self._push_emotion_event("user", "User interrupted me mid-sentence"),
+                play_sound=self.play_bank_sound,
             )
         if self.input_mode in {"text", "both"}:
             if self.input_mode == "text":
@@ -815,9 +838,28 @@ class Glados:
         if interruptible is None:
             interruptible = self.interruptible
         logger.success("Playing announcement...")
+        if self.play_bank_sound("startup"):
+            return
         if self.announcement:
             self.tts_queue.put(self.announcement)
             self.processing_active_event.set()
+
+    def play_bank_sound(self, category: str) -> bool:
+        """Play a random pre-recorded voice line of the category, if available.
+
+        Pushes the clip straight into the audio queue, bypassing TTS: the
+        reaction is instant and costs no synthesis credits. Returns True if a
+        clip was queued.
+        """
+        if self.sound_bank is None:
+            return False
+        clip = self.sound_bank.random(category)
+        if clip is None:
+            return False
+        audio, text = clip
+        self.audio_queue.put(AudioMessage(audio=audio, text=text))
+        self.audio_queue.put(AudioMessage(audio=np.array([], dtype=np.float32), text="", is_eos=True))
+        return True
 
     @property
     def messages(self) -> list[dict[str, Any]]:
@@ -870,6 +912,7 @@ class Glados:
             tts_enabled=config.tts_enabled,
             asr_muted=config.asr_muted,
             llm_headers=config.llm_headers,
+            sound_bank_config=config.sound_bank,
         )
 
     @classmethod

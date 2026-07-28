@@ -30,6 +30,28 @@ Glados:
     jobs:
       enabled: false
       poll_interval_s: 1
+  # Мгновенные реплики из дубляжа фильма (локальные WAV, без TTS и кредитов).
+  # Пак: «Jarvis Sound Pack от Jarvis Desktop» (в git не хранится — авторские права,
+  # распакуйте архив в data/sounds/jarvis-pack).
+  sound_bank:
+    dir: "data/sounds/jarvis-pack/Jarvis Sound Pack от Jarvis Desktop"
+    sounds:
+      startup:
+        - "Джарвис - приветствие.wav"
+        - "Мы подключены и готовы.wav"
+        - "Я перезагрузился сэр.wav"
+      wake_ack:
+        - "Да сэр.wav"
+        - "Да сэр(второй).wav"
+        - "К вашим услугам сэр.wav"
+        - "Всегда к вашим услугам сэр.wav"
+        - "Есть.wav"
+        - "Как пожелаете .wav"
+      processing:
+        - "Загружаю сэр.wav"
+      done:
+        - "Запрос выполнен сэр.wav"
+        - "Проверка завершена.wav"
   mcp_servers:
     - name: "system_info"
       transport: "stdio"

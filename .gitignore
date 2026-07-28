@@ -181,3 +181,4 @@ CLAUDE.md
 # Piper voice models (download from https://huggingface.co/rhasspy/piper-voices)
 models/TTS/piper/
 test_*.wav
+data/sounds/

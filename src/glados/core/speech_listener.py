@@ -58,6 +58,7 @@ class SpeechListener:
         asr_muted_event: threading.Event | None = None,
         audio_state: AudioState | None = None,
         on_interrupt: InterruptCallback | None = None,
+        play_sound: "Callable[[str], bool] | None" = None,
     ) -> None:
         """
         Initializes the SpeechListener with audio I/O, inter-thread communication, and ASR model.
@@ -76,6 +77,7 @@ class SpeechListener:
         self.llm_queue = llm_queue
         self.asr_model = asr_model
         self.wake_word = wake_word.lower() if wake_word else None
+        self._play_sound = play_sound
         self.pause_time = pause_time
         self.interruptible = interruptible
 
@@ -243,6 +245,13 @@ class SpeechListener:
         closest_distance = min(distance(word.lower(), self.wake_word) for word in words)
         return closest_distance < self.SIMILARITY_THRESHOLD
 
+    def _is_wake_word_only(self, text: str) -> bool:
+        """True if the utterance is just the wake word (a hail with no request)."""
+        if self.wake_word is None:
+            return False
+        words = [w.strip(".,!?…") for w in text.split()]
+        return all(distance(w.lower(), self.wake_word) < self.SIMILARITY_THRESHOLD for w in words if w)
+
     def reset(self) -> None:
         """
         Resets the internal state of the speech listener, clearing all audio buffers and counters.
@@ -282,6 +291,12 @@ class SpeechListener:
 
             if self.wake_word and not self._wakeword_detected(detected_text):
                 logger.info(f"Required wake word {self.wake_word=} not detected.")
+            elif self.wake_word and self._play_sound and self._is_wake_word_only(detected_text):
+                # A bare "Jarvis?" is a hail, not a request: answer instantly
+                # with a pre-recorded acknowledgement instead of waking the LLM.
+                self._play_sound("wake_ack")
+                if self._interaction_state:
+                    self._interaction_state.mark_user()
             else:
                 if self._observability_bus:
                     self._observability_bus.emit(
@@ -289,6 +304,9 @@ class SpeechListener:
                         kind="user_input",
                         message=trim_message(detected_text),
                     )
+                if self.wake_word and self._play_sound:
+                    # Bridge the LLM latency with a short "loading, sir" line
+                    self._play_sound("processing")
                 self.llm_queue.put(
                     {
                         "role": "user",
