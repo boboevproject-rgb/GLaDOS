@@ -73,7 +73,12 @@ class TextToSpeechSynthesizer:
                         )
 
                     start_time = time.time()
-                    spoken_text_variant = self.stc.text_to_spoken(text_to_speak)
+                    # Engines with a built-in multilingual normalizer (e.g. Piper/espeak-ng)
+                    # must not go through the English-only SpokenTextConverter.
+                    if getattr(self.tts_model, "handles_text_normalization", False):
+                        spoken_text_variant = text_to_speak
+                    else:
+                        spoken_text_variant = self.stc.text_to_spoken(text_to_speak)
                     if self._tts_muted_event and self._tts_muted_event.is_set():
                         audio_data = np.array([], dtype=np.float32)
                     else:

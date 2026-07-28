@@ -55,6 +55,9 @@ class SpeechSynthesizer:
     """Piper text-to-speech synthesizer conforming to SpeechSynthesizerProtocol."""
 
     sample_rate: int
+    # espeak-ng expands numbers/dates in the voice's own language, so the
+    # English-only SpokenTextConverter must be skipped for this engine.
+    handles_text_normalization: bool = True
 
     def __init__(self, voice: str = "ru_RU-dmitri-medium", use_cuda: bool = False) -> None:
         model_path = PIPER_VOICES_DIR / f"{voice}.onnx"

@@ -10,7 +10,7 @@ from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn
 import sounddevice as sd  # type: ignore
 
 from .core.engine import Glados, GladosConfig
-from .TTS import tts_glados
+from .TTS import get_speech_synthesizer
 from .utils import spoken_text_converter as stc
 from .utils.resources import resource_path
 
@@ -190,9 +190,13 @@ def say(text: str, config_path: str | Path | list[str] | list[Path] = "glados_co
     Example:
         say("Hello, world!")  # Speaks the text using GLaDOS voice
     """
-    glados_tts = tts_glados.SpeechSynthesizer()
-    converter = stc.SpokenTextConverter()
-    converted_text = converter.text_to_spoken(text)
+    glados_config = GladosConfig.from_yaml(config_path)
+    glados_tts = get_speech_synthesizer(glados_config.voice)
+    if getattr(glados_tts, "handles_text_normalization", False):
+        converted_text = text
+    else:
+        converter = stc.SpokenTextConverter()
+        converted_text = converter.text_to_spoken(text)
     # Generate the audio to from the text
     audio = glados_tts.generate_speech_audio(converted_text)
 
@@ -398,13 +402,14 @@ def main() -> int:
 
     if args.command == "download":
         return asyncio.run(download_models())
+    elif args.command == "say":
+        # 'say' only needs the configured TTS voice; don't block on ASR/Vision models
+        say(args.text, args.config)
     else:
         if not models_valid():
             print("Some model files are invalid or missing. Please run 'uv run glados download'")
             return 1
-        if args.command == "say":
-            say(args.text, args.config)
-        elif args.command == "start":
+        if args.command == "start":
             start(
                 args.config,
                 input_mode=args.input_mode,
