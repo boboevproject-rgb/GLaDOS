@@ -12,7 +12,12 @@ Glados:
   asr_engine: "tdt"  # tdt = Parakeet v3, мультиязычный (русский поддержан); ctc — только английский!
   llm_headers: null
   wake_word: "джарвис"
-  voice: "ru_RU-dmitri-medium"  # мужской голос Piper; женский: "ru_RU-irina-medium"
+  # Голос: локальный Piper ("ru_RU-dmitri-medium" / "ru_RU-irina-medium")
+  # или облачный Fish Audio с голосом Джарвиса ("fish:<reference_id>", нужен FISH_API_KEY):
+  #   fish:4c3eaacc1a0545cdb0295bfddf3e3785  — «ДЖАРВИС» (20 тыс. использований)
+  #   fish:3fc339d7c6474b11a221708e2a7b1c4b  — «Джарвис» (331 лайк)
+  #   fish:0c7fd46820854a9e8c4010d911687b7a  — «Джарвис 2.0» (ru/uk/bg)
+  voice: "ru_RU-dmitri-medium"
   announcement: "Все нейронные модули загружены. Джарвис к вашим услугам."
   autonomy:
     enabled: false
