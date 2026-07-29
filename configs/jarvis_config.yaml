@@ -11,7 +11,7 @@ Glados:
   # Сколько секунд не слушать ПОСЛЕ своей реплики — за это время затухает
   # эхо в комнате. Увеличьте (0.8–1.2), если динамики громкие и он всё ещё
   # ловит собственный хвост; уменьшите, если ответ приходится ждать.
-  post_speech_guard_s: 0.5
+  post_speech_guard_s: 1.0
   audio_io: "sounddevice"
   input_mode: "audio"  # audio, text, or both
   tts_enabled: true

@@ -41,6 +41,7 @@ class SpeechSynthesizer:
         model: str | None = None,
         sample_rate: int = 44100,
         backend: str = "official",
+        fallback_voice: str | None = "ru_RU-dmitri-medium",
     ) -> None:
         self.api_key = api_key or os.environ.get("FISH_API_KEY")
         if not self.api_key:
@@ -55,6 +56,12 @@ class SpeechSynthesizer:
         self.model = model or (KITTA_DEFAULT_MODEL if backend == "kitta" else DEFAULT_MODEL)
         self.sample_rate = sample_rate
         self._session = requests.Session()
+        # Cloud synthesis fails on expired credits, rate limits or a dropped
+        # connection. Speaking in a local voice beats going mute, so a Piper
+        # voice is loaded on first failure and used from then on.
+        self._fallback_voice = fallback_voice
+        self._fallback: object | None = None
+        self._warned_fallback = False
 
     def _request_audio(self, text: str) -> bytes:
         if self.backend == "kitta":
@@ -88,6 +95,27 @@ class SpeechSynthesizer:
         response.raise_for_status()
         return response.content
 
+    def _speak_locally(self, text: str) -> NDArray[np.float32]:
+        """Synthesize with the local Piper voice, resampled to our rate.
+
+        The audio player is configured with this instance's `sample_rate`, so
+        the fallback output must match it regardless of the voice's own rate.
+        """
+        if self._fallback_voice is None:
+            return np.array([], dtype=np.float32)
+        if self._fallback is None:
+            from ..TTS import tts_piper
+
+            self._fallback = tts_piper.SpeechSynthesizer(voice=self._fallback_voice)
+        audio = self._fallback.generate_speech_audio(text)
+        rate = self._fallback.sample_rate
+        if rate != self.sample_rate and audio.size:
+            n = int(len(audio) * self.sample_rate / rate)
+            audio = np.interp(
+                np.linspace(0, len(audio) - 1, n), np.arange(len(audio)), audio
+            ).astype(np.float32)
+        return audio
+
     def generate_speech_audio(self, text: str) -> NDArray[np.float32]:
         text = text.strip()
         if not text:
@@ -95,8 +123,10 @@ class SpeechSynthesizer:
         try:
             content = self._request_audio(text)
         except requests.RequestException as e:
-            logger.error(f"Fish Audio TTS request failed: {e}")
-            return np.array([], dtype=np.float32)
+            if not self._warned_fallback:
+                logger.error(f"Fish Audio TTS unavailable ({e}); switching to the local voice")
+                self._warned_fallback = True
+            return self._speak_locally(text)
 
         audio, wav_rate = sf.read(BytesIO(content), dtype="float32")
         if audio.ndim > 1:  # downmix, the player expects mono
