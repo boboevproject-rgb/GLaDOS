@@ -63,6 +63,14 @@ if os.environ.get("JARVIS_NO_GUARDRAILS") == "1":
     DENY_PATTERNS = []
 WORKSPACE = os.environ.get("JARVIS_WORKSPACE", os.path.join(os.path.expanduser("~"), "Jarvis"))
 TIMEOUT_APOLOGY = "Прошу прощения, сэр, задача заняла слишком много времени и была прервана."
+# The CLI reports failures as an assistant message whose text is in English —
+# read aloud it is both confusing and useless, so known cases are replaced with
+# something the owner can act on.
+AUTH_APOLOGY = (
+    "Сэр, срок моей авторизации истёк. Откройте терминал, запустите claude "
+    "и войдите в аккаунт — после этого я снова в вашем распоряжении."
+)
+ERROR_APOLOGY = "Прошу прощения, сэр, мой мыслительный модуль вернул ошибку."
 
 CLAUDE_BIN = shutil.which("claude")
 if not CLAUDE_BIN:
@@ -241,6 +249,14 @@ def stream_claude(system_prompt: str, transcript: str):
             except json.JSONDecodeError:
                 continue
             etype = event.get("type")
+            failure = event.get("error") if etype == "assistant" else None
+            if etype == "result" and event.get("is_error"):
+                failure = failure or "error"
+            if failure:
+                print(f"[brain] сбой Claude CLI: {failure}", flush=True)
+                if not streamed_any:
+                    yield AUTH_APOLOGY if "auth" in str(failure) else ERROR_APOLOGY
+                break
             if etype == "stream_event":
                 inner = event.get("event", {})
                 if inner.get("type") == "content_block_delta":
