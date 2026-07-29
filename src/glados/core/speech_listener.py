@@ -41,6 +41,10 @@ class SpeechListener:
     BUFFER_SIZE: int = 800  # Milliseconds of buffer BEFORE VAD detection
     PAUSE_LIMIT: int = 640  # Milliseconds of pause allowed before processing
     SIMILARITY_THRESHOLD: int = 2  # Threshold for wake word similarity
+    # Seconds to stay deaf after the assistant stops speaking. Without echo
+    # cancellation the room still carries the tail of its own voice, which the
+    # microphone would otherwise pick up as the user's next command.
+    POST_SPEECH_GUARD_S: float = 0.5
 
     def __init__(
         self,
@@ -60,6 +64,7 @@ class SpeechListener:
         on_interrupt: InterruptCallback | None = None,
         play_sound: "Callable[[str], bool] | None" = None,
         wake_word_threshold: int | None = None,
+        post_speech_guard_s: float | None = None,
     ) -> None:
         """
         Initializes the SpeechListener with audio I/O, inter-thread communication, and ASR model.
@@ -103,6 +108,11 @@ class SpeechListener:
         self._asr_muted_event = asr_muted_event
         self._audio_state = audio_state
         self._on_interrupt = on_interrupt
+        # Monotonic deadline until which microphone input is ignored, so the
+        # assistant never hears the tail of its own speech (see below).
+        self._deaf_until = 0.0
+        if post_speech_guard_s is not None:
+            self.POST_SPEECH_GUARD_S = post_speech_guard_s
 
     def run(self) -> None:
         """
@@ -185,11 +195,20 @@ class SpeechListener:
             sample: The current audio sample (numpy array) to be added to the buffer.
             vad_confidence: True if voice activity is detected in the sample, False otherwise.
         """
+        if not self.interruptible and self.currently_speaking_event.is_set():
+            # Fully deaf while speaking: the buffer is dropped rather than
+            # filled, otherwise the moment playback ends its last 800 ms — our
+            # own voice — would become the first "command" we transcribe.
+            self._buffer.clear()
+            self._deaf_until = time.monotonic() + self.POST_SPEECH_GUARD_S
+            return
+
         self._buffer.append(sample)  # Automatically handles overflow
 
         if vad_confidence:
-            if not self.interruptible and self.currently_speaking_event.is_set():
-                logger.debug(f"Detected voice activity but interruptibility is disabled: {self.interruptible=}, {self.currently_speaking_event.is_set()=}")
+            if time.monotonic() < self._deaf_until:
+                # Acoustic tail of our own speech still reaching the microphone
+                logger.debug("Ignoring voice activity during post-speech guard")
                 return
 
             # Check if this is an interrupt (user speaking while GLaDOS was speaking)
