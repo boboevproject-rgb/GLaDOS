@@ -21,14 +21,46 @@ Run: uv run python scripts/claude_brain_proxy.py
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 MODEL = os.environ.get("CLAUDE_BRAIN_MODEL", "sonnet")
 PORT = int(os.environ.get("CLAUDE_BRAIN_PORT", "8555"))
-CLI_TIMEOUT_S = 120
+# Actions (presentations, long scripts) can take minutes
+CLI_TIMEOUT_S = int(os.environ.get("CLAUDE_BRAIN_TIMEOUT", "300"))
+HEARTBEAT_S = 10  # GLaDOS drops the socket after ~30s of silence
+
+# The hands: tools the brain may use without prompts (headless mode cannot ask).
+# Voice is an open channel — anything the microphone picks up reaches these
+# tools, so the set is deliberately configurable and defaults to read-only.
+# Grant write/exec via JARVIS_TOOLS once you trust the setup, e.g.
+#   set JARVIS_TOOLS=Read,Glob,Grep,WebSearch,WebFetch,Write,Edit,Bash
+SAFE_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"]
+FULL_TOOLS = [*SAFE_TOOLS, "Write", "Edit", "Bash"]
+ACTION_TOOLS = [t.strip() for t in os.environ.get("JARVIS_TOOLS", ",".join(SAFE_TOOLS)).split(",") if t.strip()]
+
+# Even with full access, a handful of operations are never a real voice command
+# and are unrecoverable if a misheard phrase triggers one. Clear with
+# JARVIS_NO_GUARDRAILS=1 if you want literally nothing blocked.
+DENY_PATTERNS = [
+    "Bash(format:*)",
+    "Bash(diskpart:*)",
+    "Bash(shutdown:*)",
+    "Bash(vssadmin delete:*)",
+    "Bash(cipher /w:*)",
+    "Bash(reg delete HKLM:*)",
+    "Bash(rm -rf /:*)",
+    "Bash(rd /s /q C:\\Windows:*)",
+    "Bash(rd /s /q C:\\Users:*)",
+]
+if os.environ.get("JARVIS_NO_GUARDRAILS") == "1":
+    DENY_PATTERNS = []
+WORKSPACE = os.environ.get("JARVIS_WORKSPACE", os.path.join(os.path.expanduser("~"), "Jarvis"))
+TIMEOUT_APOLOGY = "Прошу прощения, сэр, задача заняла слишком много времени и была прервана."
 
 CLAUDE_BIN = shutil.which("claude")
 if not CLAUDE_BIN:
@@ -52,13 +84,27 @@ def build_prompt(messages: list[dict]) -> tuple[str, str]:
             lines.append(f"{ROLE_LABELS.get(role, role)}: {content.strip()}")
     system_parts.append(
         "Ниже — стенограмма голосового диалога. Ответь СЛЕДУЮЩЕЙ репликой Джарвиса: "
-        "только текст реплики, без имени говорящего, без кавычек и пояснений."
+        "только текст реплики, без имени говорящего, без кавычек и пояснений.\n"
+        "У тебя есть руки: инструменты этого Windows-компьютера (запуск программ, "
+        "файлы, документы, интернет). Если пользователь просит что-то сделать — "
+        "сделай это инструментами, а не рассказывай как. Новые файлы сохраняй в "
+        "текущую рабочую папку Jarvis и коротко называй, куда положил. "
+        "ВЕСЬ твой текст озвучивается голосом: никакого маркдауна, кода, списков "
+        "и технических подробностей в тексте — только короткие разговорные фразы. "
+        "Перед долгим действием одной фразой скажи, что приступаешь."
     )
     return "\n\n".join(system_parts), "\n".join(lines) or "Пользователь: Привет"
 
 
+_EOF = object()
+
+
 def stream_claude(system_prompt: str, transcript: str):
-    """Yield reply text pieces from a headless claude call."""
+    """Yield reply text pieces from a headless claude call.
+
+    Yields None as a heartbeat when the CLI is busy with tools (the caller
+    turns it into an empty SSE chunk so GLaDOS's read timeout never fires).
+    """
     cmd = [
         CLAUDE_BIN,
         "-p",
@@ -67,8 +113,11 @@ def stream_claude(system_prompt: str, transcript: str):
         "--include-partial-messages",
         "--model", MODEL,
         "--system-prompt", system_prompt,
-        "--disallowedTools", "*",
+        "--allowedTools", *ACTION_TOOLS,
+        "--permission-mode", "acceptEdits",
     ]
+    if DENY_PATTERNS:
+        cmd += ["--disallowedTools", *DENY_PATTERNS]
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
@@ -76,12 +125,33 @@ def stream_claude(system_prompt: str, transcript: str):
         stderr=subprocess.DEVNULL,
         encoding="utf-8",
         errors="replace",
+        cwd=WORKSPACE,
     )
+    lines: queue.Queue = queue.Queue()
+
+    def _reader() -> None:
+        for raw in proc.stdout:
+            lines.put(raw)
+        lines.put(_EOF)
+
+    threading.Thread(target=_reader, daemon=True).start()
     try:
         proc.stdin.write(transcript)
         proc.stdin.close()
         streamed_any = False
-        for raw in proc.stdout:
+        deadline = time.time() + CLI_TIMEOUT_S
+        while True:
+            if time.time() > deadline:
+                proc.kill()
+                yield ("\n" if streamed_any else "") + TIMEOUT_APOLOGY
+                break
+            try:
+                raw = lines.get(timeout=HEARTBEAT_S)
+            except queue.Empty:
+                yield None  # heartbeat: tools are working, keep the socket warm
+                continue
+            if raw is _EOF:
+                break
             raw = raw.strip()
             if not raw:
                 continue
@@ -152,6 +222,9 @@ class Handler(BaseHTTPRequestHandler):
             pieces: list[str] = []
             try:
                 for piece in stream_claude(system_prompt, transcript):
+                    if piece is None:  # heartbeat while tools are working
+                        write(b"data: {}\n\n")
+                        continue
                     pieces.append(piece)
                     write(sse_chunk({**base, "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}))
                 write(sse_chunk({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}))
@@ -161,7 +234,7 @@ class Handler(BaseHTTPRequestHandler):
                 pass  # GLaDOS dropped the stream (interruption) — fine
             reply = "".join(pieces)
         else:
-            reply = "".join(stream_claude(system_prompt, transcript))
+            reply = "".join(p for p in stream_claude(system_prompt, transcript) if p)
             body = json.dumps(
                 {
                     **base,
@@ -183,5 +256,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"[brain] Claude brain proxy on http://127.0.0.1:{PORT}/v1/chat/completions (model={MODEL})", flush=True)
+    os.makedirs(WORKSPACE, exist_ok=True)
+    print(
+        f"[brain] Claude brain proxy on http://127.0.0.1:{PORT}/v1/chat/completions "
+        f"(model={MODEL}, workspace={WORKSPACE}, tools={','.join(ACTION_TOOLS)})",
+        flush=True,
+    )
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
