@@ -11,8 +11,9 @@ Design notes:
   is a stateless CLI call: system messages become --system-prompt (replacing
   the Claude Code default entirely — no coding persona, fewer tokens), the
   rest is flattened into a transcript fed via stdin (argv has length limits).
-- All tools are disallowed: this brain only talks. Actions come in a later
-  stage via MCP.
+- The child runs with the proxy's own virtualenv stripped from the
+  environment, so `python` inside the agent's shell is the system interpreter
+  the user installs libraries into.
 
 Env vars: CLAUDE_BRAIN_MODEL (default "sonnet"), CLAUDE_BRAIN_PORT (8555).
 Run: uv run python scripts/claude_brain_proxy.py
@@ -21,6 +22,7 @@ Run: uv run python scripts/claude_brain_proxy.py
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+from pathlib import Path
 import queue
 import shutil
 import subprocess
@@ -99,11 +101,59 @@ def build_prompt(messages: list[dict]) -> tuple[str, str]:
         "tools/screen.png инструментом Read — ты увидишь изображение. "
         "Делай так всегда, когда спрашивают про экран, окно, ошибку на нём "
         "или просят прочитать что-то с экрана; не отвечай, что не видишь. "
+        "У тебя есть руки для мыши и клавиатуры: "
+        "`python tools/click.py X Y` (можно --double, --right, --move) кликает "
+        "по точке, где ты УВИДЕЛ её на снимке — координаты бери прямо с "
+        "картинки, скрипт сам пересчитает их в экранные, сам не умножай. "
+        "`python tools/type.py \"текст\"` вводит текст в активное окно "
+        "(можно --enter), `--key enter` жмёт клавишу, `--hotkey ctrl s` — "
+        "сочетание. Перед кликом ОБЯЗАТЕЛЬНО делай свежий снимок: окна двигаются. "
+        "Перед вводом текста тоже сначала снимок — текст уходит в то окно, что "
+        "сейчас в фокусе, и попасть не туда легко. Убедись по снимку, что "
+        "активно нужное окно и курсор стоит в нужном поле; если нет — сначала "
+        "кликни в это поле, сделай снимок ещё раз и только потом печатай. "
+        "ПРАВИЛО ПОДТВЕРЖДЕНИЯ: необратимые и внешние действия — отправка "
+        "письма или сообщения, оплата и переводы, публикация, удаление файлов "
+        "и писем, подтверждение форм и согласий, установка и удаление программ, "
+        "изменение настроек системы — НЕ выполняй сразу. Подготовь всё до "
+        "последнего шага, затем ОСТАНОВИСЬ и спроси голосом коротко, например "
+        "«Письмо готово. Отправить, сэр?» — и жди ответа. Выполняй только "
+        "после явного согласия в следующей реплике. Обычные действия "
+        "(открыть, посмотреть, найти, создать файл, напечатать текст) делай "
+        "сразу, без вопросов. "
         "ВЕСЬ твой текст озвучивается голосом: никакого маркдауна, кода, списков "
         "и технических подробностей в тексте — только короткие разговорные фразы. "
         "Перед долгим действием одной фразой скажи, что приступаешь."
     )
     return "\n\n".join(system_parts), "\n".join(lines) or "Пользователь: Привет"
+
+
+def _child_env() -> dict[str, str]:
+    """Environment for the agent, with our own virtualenv taken out of the way.
+
+    The proxy itself is started through `uv run`, which exports VIRTUAL_ENV and
+    puts that venv first on PATH. Those leak into every shell the agent opens,
+    so `python` resolved to the assistant's own environment — which lacks the
+    libraries the user installs system-wide — and scripts failed or got
+    installed into the wrong place.
+    """
+    env = os.environ.copy()
+    venv = env.pop("VIRTUAL_ENV", None)
+    env.pop("UV_PROJECT_ENVIRONMENT", None)
+    if venv:
+        scripts = (Path(venv) / "Scripts").resolve()
+        kept = []
+        for part in env.get("PATH", "").split(os.pathsep):
+            if not part:
+                continue
+            try:
+                if Path(part).resolve() == scripts:
+                    continue
+            except OSError:
+                pass
+            kept.append(part)
+        env["PATH"] = os.pathsep.join(kept)
+    return env
 
 
 _EOF = object()
@@ -136,6 +186,7 @@ def stream_claude(system_prompt: str, transcript: str):
         encoding="utf-8",
         errors="replace",
         cwd=WORKSPACE,
+        env=_child_env(),
     )
     lines: queue.Queue = queue.Queue()
 
