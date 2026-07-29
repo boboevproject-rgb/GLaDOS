@@ -150,18 +150,26 @@ def stream_claude(system_prompt: str, transcript: str):
         proc.stdin.close()
         streamed_any = False
         deadline = time.time() + CLI_TIMEOUT_S
+        # Measured against what we send downstream, not against CLI chatter:
+        # while a tool runs the CLI keeps emitting events we do not forward, so
+        # the client would sit without a single byte and hit its read timeout.
+        last_emit = time.monotonic()
         while True:
             if time.time() > deadline:
                 proc.kill()
                 yield ("\n" if streamed_any else "") + TIMEOUT_APOLOGY
                 break
             try:
-                raw = lines.get(timeout=HEARTBEAT_S)
+                raw = lines.get(timeout=1.0)
             except queue.Empty:
-                yield None  # heartbeat: tools are working, keep the socket warm
-                continue
+                raw = None
             if raw is _EOF:
                 break
+            if raw is None:
+                if time.monotonic() - last_emit >= HEARTBEAT_S:
+                    yield None  # keep the connection warm while tools work
+                    last_emit = time.monotonic()
+                continue
             raw = raw.strip()
             if not raw:
                 continue
@@ -176,11 +184,13 @@ def stream_claude(system_prompt: str, transcript: str):
                     delta = inner.get("delta", {})
                     if delta.get("type") == "text_delta" and delta.get("text"):
                         streamed_any = True
+                        last_emit = time.monotonic()
                         yield delta["text"]
             elif etype == "assistant" and not streamed_any:
                 # Fallback if partial events are unavailable: whole blocks
                 for block in event.get("message", {}).get("content", []):
                     if block.get("type") == "text" and block.get("text"):
+                        last_emit = time.monotonic()
                         yield block["text"]
             elif etype == "result":
                 break

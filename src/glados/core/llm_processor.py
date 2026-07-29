@@ -727,7 +727,10 @@ class LanguageModelProcessor:
                                 headers=self.prompt_headers,
                                 json=data,
                                 stream=True,
-                                timeout=30,  # Add a timeout for the request itself
+                                # Generous read timeout: a reply that uses tools
+                                # (screenshots, scripts, documents) can stay silent
+                                # for a while before the first token arrives.
+                                timeout=180,
                             ) as response:
                                 if response.status_code >= 400:
                                     response_text = response.text.strip()
@@ -796,17 +799,17 @@ class LanguageModelProcessor:
                 except requests.exceptions.ConnectionError as e:
                     logger.error(f"LLM Processor: Connection error to LLM service: {e}")
                     self.tts_input_queue.put(
-                        "I'm unable to connect to my thinking module. Please check the LLM service connection."
+                        "Прошу прощения, сэр, связь с моим мыслительным модулем потеряна."
                     )
                 except requests.exceptions.Timeout as e:
                     logger.error(f"LLM Processor: Request to LLM timed out: {e}")
-                    self.tts_input_queue.put("My brain seems to be taking too long to respond. It might be overloaded.")
+                    self.tts_input_queue.put("Прошу прощения, сэр, обдумывание заняло слишком много времени.")
                 except requests.exceptions.HTTPError as e:
                     if http_error_detail:
                         status_code, detail = http_error_detail
                         logger.error(f"LLM Processor: HTTP error {status_code} from LLM service: {detail}")
                         self.tts_input_queue.put(
-                            f"I received an error from my thinking module. HTTP status {status_code}."
+                            f"Мыслительный модуль вернул ошибку, сэр. Код {status_code}."
                         )
                     else:
                         status_code = (
