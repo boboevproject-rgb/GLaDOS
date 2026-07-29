@@ -128,6 +128,8 @@ class GladosConfig(BaseModel):
     wake_word: str | None
     wake_word_threshold: int | None = None
     post_speech_guard_s: float | None = None
+    min_speech_s: float | None = None
+    min_speech_rms: float | None = None
     voice: str
     announcement: str | None
     llm_headers: dict[str, str] | None = None
@@ -249,6 +251,8 @@ class Glados:
         wake_word: str | None = None,
         wake_word_threshold: int | None = None,
         post_speech_guard_s: float | None = None,
+        min_speech_s: float | None = None,
+        min_speech_rms: float | None = None,
         announcement: str | None = None,
         personality_preprompt: tuple[dict[str, str], ...] = DEFAULT_PERSONALITY_PREPROMPT,
         tool_config: dict[str, Any] | None = None,
@@ -300,6 +304,8 @@ class Glados:
         self.wake_word = wake_word
         self.wake_word_threshold = wake_word_threshold
         self.post_speech_guard_s = post_speech_guard_s
+        self.min_speech_s = min_speech_s
+        self.min_speech_rms = min_speech_rms
         self.announcement = announcement
         self.tool_config = tool_config or {}
         self.tool_timeout = tool_timeout
@@ -449,6 +455,8 @@ class Glados:
                 play_sound=self.play_bank_sound,
                 wake_word_threshold=self.wake_word_threshold,
                 post_speech_guard_s=self.post_speech_guard_s,
+                min_speech_s=self.min_speech_s,
+                min_speech_rms=self.min_speech_rms,
             )
         if self.input_mode in {"text", "both"}:
             if self.input_mode == "text":
@@ -911,6 +919,8 @@ class Glados:
             wake_word=config.wake_word,
             wake_word_threshold=config.wake_word_threshold,
             post_speech_guard_s=config.post_speech_guard_s,
+            min_speech_s=config.min_speech_s,
+            min_speech_rms=config.min_speech_rms,
             announcement=config.announcement,
             personality_preprompt=tuple(config.to_chat_messages()),
             tool_config={"slow_clap_audio_path": config.slow_clap_audio_path},

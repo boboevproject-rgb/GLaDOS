@@ -46,6 +46,14 @@ class SpeechListener:
     # microphone would otherwise pick up as the user's next command.
     POST_SPEECH_GUARD_S: float = 0.5
 
+    INPUT_SAMPLE_RATE: int = 16000
+    # Gates applied before transcription while waiting for the wake word.
+    # ASR normalises audio to full scale, so distant chatter is amplified into
+    # confident-sounding nonsense; anything too short or too quiet to be someone
+    # addressing the assistant is dropped instead of being turned into words.
+    MIN_SPEECH_S: float = 0.45
+    MIN_SPEECH_RMS: float = 0.012
+
     def __init__(
         self,
         audio_io: AudioProtocol,  # Replace with actual type if known
@@ -65,6 +73,8 @@ class SpeechListener:
         play_sound: "Callable[[str], bool] | None" = None,
         wake_word_threshold: int | None = None,
         post_speech_guard_s: float | None = None,
+        min_speech_s: float | None = None,
+        min_speech_rms: float | None = None,
     ) -> None:
         """
         Initializes the SpeechListener with audio I/O, inter-thread communication, and ASR model.
@@ -113,6 +123,10 @@ class SpeechListener:
         self._deaf_until = 0.0
         if post_speech_guard_s is not None:
             self.POST_SPEECH_GUARD_S = post_speech_guard_s
+        if min_speech_s is not None:
+            self.MIN_SPEECH_S = min_speech_s
+        if min_speech_rms is not None:
+            self.MIN_SPEECH_RMS = min_speech_rms
 
     def run(self) -> None:
         """
@@ -300,6 +314,27 @@ class SpeechListener:
         if self._audio_state is not None:
             self._audio_state.reset()
 
+    def _worth_transcribing(self) -> bool:
+        """Whether the captured audio could plausibly be someone calling us.
+
+        Applied only while a wake word is configured, i.e. while the assistant
+        is idle. A wake word takes time to say and is spoken towards the
+        microphone, so clips that are very short or very quiet cannot be one —
+        transcribing them only produces invented words and burns CPU.
+        """
+        if not self._samples:
+            return False
+        audio = np.concatenate(self._samples)
+        duration = len(audio) / self.INPUT_SAMPLE_RATE
+        if duration < self.MIN_SPEECH_S:
+            logger.debug(f"Too short to be the wake word: {duration:.2f}s")
+            return False
+        rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
+        if rms < self.MIN_SPEECH_RMS:
+            logger.debug(f"Too quiet to be addressed to us: rms {rms:.4f}")
+            return False
+        return True
+
     def _process_detected_audio(self) -> None:
         """
         Processes the accumulated audio samples once a speech pause is detected.
@@ -314,20 +349,26 @@ class SpeechListener:
         """
         logger.debug("Detected pause after speech. Processing...")
 
+        if self.wake_word and not self._worth_transcribing():
+            self.reset()
+            return
+
         detected_text = self.asr(self._samples)
 
         if detected_text:
-            logger.success(f"ASR text: '{detected_text}'")
-
             if self.wake_word and not self._wakeword_detected(detected_text):
-                logger.info(f"Required wake word {self.wake_word=} not detected.")
+                # While asleep the room's chatter is noise, not conversation:
+                # keep it out of the visible log so only real exchanges show up.
+                logger.debug(f"Ignored, not addressed to us: '{detected_text}'")
             elif self.wake_word and self._play_sound and self._is_wake_word_only(detected_text):
+                logger.success(f"ASR text: '{detected_text}'")
                 # A bare "Jarvis?" is a hail, not a request: answer instantly
                 # with a pre-recorded acknowledgement instead of waking the LLM.
                 self._play_sound("wake_ack")
                 if self._interaction_state:
                     self._interaction_state.mark_user()
             else:
+                logger.success(f"ASR text: '{detected_text}'")
                 if self._observability_bus:
                     self._observability_bus.emit(
                         source="asr",
