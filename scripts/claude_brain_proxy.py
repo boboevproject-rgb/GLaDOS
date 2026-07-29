@@ -255,6 +255,21 @@ class Handler(BaseHTTPRequestHandler):
         )
 
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """HTTP server that does not dump a traceback when a client hangs up.
+
+    GLaDOS keeps connections alive and drops them whenever a reply is
+    cancelled or an idle socket is recycled, which is normal here and would
+    otherwise flood the console with connection-reset stack traces.
+    """
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, ConnectionResetError | ConnectionAbortedError | BrokenPipeError):
+            return
+        super().handle_error(request, client_address)  # type: ignore[arg-type]
+
+
 if __name__ == "__main__":
     os.makedirs(WORKSPACE, exist_ok=True)
     print(
@@ -262,4 +277,4 @@ if __name__ == "__main__":
         f"(model={MODEL}, workspace={WORKSPACE}, tools={','.join(ACTION_TOOLS)})",
         flush=True,
     )
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    QuietThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
