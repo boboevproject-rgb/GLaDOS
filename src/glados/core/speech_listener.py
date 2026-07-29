@@ -59,6 +59,7 @@ class SpeechListener:
         audio_state: AudioState | None = None,
         on_interrupt: InterruptCallback | None = None,
         play_sound: "Callable[[str], bool] | None" = None,
+        wake_word_threshold: int | None = None,
     ) -> None:
         """
         Initializes the SpeechListener with audio I/O, inter-thread communication, and ASR model.
@@ -78,6 +79,10 @@ class SpeechListener:
         self.asr_model = asr_model
         self.wake_word = wake_word.lower() if wake_word else None
         self._play_sound = play_sound
+        # Longer/non-English wake words need more slack: ASR drops or swaps
+        # letters ("джарвис" -> "давис"), which already costs 2 edits.
+        if wake_word_threshold is not None:
+            self.SIMILARITY_THRESHOLD = wake_word_threshold
         self.pause_time = pause_time
         self.interruptible = interruptible
 

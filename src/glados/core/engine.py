@@ -126,6 +126,7 @@ class GladosConfig(BaseModel):
     asr_muted: bool = False
     asr_engine: str
     wake_word: str | None
+    wake_word_threshold: int | None = None
     voice: str
     announcement: str | None
     llm_headers: dict[str, str] | None = None
@@ -245,6 +246,7 @@ class Glados:
         api_key: str | None = None,
         interruptible: bool = True,
         wake_word: str | None = None,
+        wake_word_threshold: int | None = None,
         announcement: str | None = None,
         personality_preprompt: tuple[dict[str, str], ...] = DEFAULT_PERSONALITY_PREPROMPT,
         tool_config: dict[str, Any] | None = None,
@@ -294,6 +296,7 @@ class Glados:
         self.api_key = api_key
         self.interruptible = interruptible
         self.wake_word = wake_word
+        self.wake_word_threshold = wake_word_threshold
         self.announcement = announcement
         self.tool_config = tool_config or {}
         self.tool_timeout = tool_timeout
@@ -441,6 +444,7 @@ class Glados:
                 audio_state=self.audio_state,
                 on_interrupt=lambda _: self._push_emotion_event("user", "User interrupted me mid-sentence"),
                 play_sound=self.play_bank_sound,
+                wake_word_threshold=self.wake_word_threshold,
             )
         if self.input_mode in {"text", "both"}:
             if self.input_mode == "text":
@@ -901,6 +905,7 @@ class Glados:
             api_key=config.api_key,
             interruptible=config.interruptible,
             wake_word=config.wake_word,
+            wake_word_threshold=config.wake_word_threshold,
             announcement=config.announcement,
             personality_preprompt=tuple(config.to_chat_messages()),
             tool_config={"slow_clap_audio_path": config.slow_clap_audio_path},

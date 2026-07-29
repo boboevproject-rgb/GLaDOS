@@ -25,6 +25,7 @@ def get_audio_transcriber(
         engine_type (str): The type of ASR engine to use:
             - "ctc": Connectionist Temporal Classification model (faster, good accuracy)
             - "tdt": Token and Duration Transducer model (best accuracy, slightly slower)
+            - "gigaam": Russian-first model (best for Russian; needs the `gigaam` extra)
         **kwargs: Additional keyword arguments to pass to the transcriber constructor
 
     Returns:
@@ -33,6 +34,10 @@ def get_audio_transcriber(
     Raises:
         ValueError: If the specified engine type is not supported
     """
+    if engine_type.lower() == "gigaam":
+        from .gigaam_asr import AudioTranscriber as GigaAMTranscriber
+
+        return GigaAMTranscriber()
     if engine_type.lower() == "ctc":
         from .ctc_asr import AudioTranscriber as CTCTranscriber
 

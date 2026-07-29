@@ -2,7 +2,7 @@
 name = "glados"
 version = "0.1.0"
 description = "GLaDOS Voice Assistant"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "sounddevice>=0.5.1",
     "levenshtein>=0.26.1",
@@ -21,8 +21,6 @@ dependencies = [
     "threadpoolctl>=3.0.0",
     "mcp>=1.25.0,<2",
     "piper-tts>=1.6.0",
-    "torch>=2.13.0",
-    "num2words>=0.5.14",
     "python-dotenv>=1.2.2",
 ]
 
@@ -46,6 +44,7 @@ export = [
     "onnxconverter-common>=1.16.0",
 ]
 api = ["litestar[standard,structlog]>=2.15.1"]
+gigaam = ["gigaam>=0.1"]  # русский ASR (Сбер); конфликтует с export по onnx
 
 [project.scripts]
 glados = "glados.cli:main"
@@ -116,3 +115,6 @@ line-ending = "auto"
 [tool.mypy]
 python_version = "3.12"
 strict = true
+
+[tool.uv]
+conflicts = [[{ extra = "gigaam" }, { extra = "export" }]]
