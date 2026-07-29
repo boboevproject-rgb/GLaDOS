@@ -196,7 +196,13 @@ class SpeechListener:
             was_speaking = self.currently_speaking_event.is_set()
 
             self.audio_io.stop_speaking()
-            self.processing_active_event.clear()
+            if not self.wake_word:
+                # Every utterance is meant for us, so drop any in-flight reply.
+                # With a wake word we cannot tell yet whether this sound is even
+                # addressed to us, so the reply is only cancelled once the wake
+                # word is actually recognised (see _process_detected_audio) —
+                # otherwise passing noise aborts an answer that is still coming.
+                self.processing_active_event.clear()
             self._samples = list(self._buffer)  # Clean conversion
             self._recording_started = True
 
@@ -309,9 +315,12 @@ class SpeechListener:
                         kind="user_input",
                         message=trim_message(detected_text),
                     )
-                if self.wake_word and self._play_sound:
-                    # Bridge the LLM latency with a short "loading, sir" line
-                    self._play_sound("processing")
+                if self.wake_word:
+                    # A new command supersedes whatever reply is still streaming
+                    self.processing_active_event.clear()
+                    if self._play_sound:
+                        # Bridge the LLM latency with a short "loading, sir" line
+                        self._play_sound("processing")
                 self.llm_queue.put(
                     {
                         "role": "user",

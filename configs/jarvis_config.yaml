@@ -4,7 +4,10 @@ Glados:
   llm_model: "sonnet"
   completion_url: "http://127.0.0.1:8555/v1/chat/completions"
   api_key: null
-  interruptible: true
+  # false: без эхоподавления динамики «слышны» микрофону, и ассистент
+  # перебивал сам себя на первых процентах каждой реплики.
+  # true можно вернуть, если слушать в наушниках.
+  interruptible: false
   audio_io: "sounddevice"
   input_mode: "audio"  # audio, text, or both
   tts_enabled: true
