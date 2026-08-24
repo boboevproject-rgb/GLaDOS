@@ -22,6 +22,12 @@ Run: uv run python scripts/claude_brain_proxy.py
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+
+from dotenv import load_dotenv
+
+# Secrets (FISH_API_KEY for the voice, CLAUDE_CODE_OAUTH_TOKEN for the brain)
+# live in the project's local .env; the CLI child inherits them via _child_env.
+load_dotenv()
 from pathlib import Path
 import queue
 import shutil
